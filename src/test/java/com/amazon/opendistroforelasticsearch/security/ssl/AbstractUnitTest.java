@@ -30,12 +30,14 @@
 
 package com.amazon.opendistroforelasticsearch.security.ssl;
 
+import com.amazon.opendistroforelasticsearch.security.ssl.helper.FileHelper;
 import io.netty.handler.ssl.OpenSsl;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.net.InetSocketAddress;
 import java.net.URL;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -50,11 +52,16 @@ import javax.net.ssl.SSLContext;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
+import org.apache.http.Header;
+import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPut;
+import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.config.SocketConfig;
 import org.apache.http.conn.ssl.NoopHostnameVerifier;
 import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
+import org.apache.http.entity.StringEntity;
 import org.apache.http.ssl.SSLContextBuilder;
 import org.apache.http.ssl.SSLContexts;
 import org.apache.http.impl.client.CloseableHttpClient;
@@ -78,6 +85,7 @@ import org.elasticsearch.node.PluginAwareNode;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.transport.Netty4Plugin;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.rules.TestName;
@@ -194,6 +202,45 @@ public abstract class AbstractUnitTest {
 
         waitForGreenClusterState(esNode1.client());
     }
+
+    public final void startES(final Settings settings, final Settings initTransportClientSettings) throws Exception {
+        startES(settings);
+        initialize(initTransportClientSettings);
+    }
+
+    protected void initialize(Settings initTransportClientSettings) {
+
+        try (TransportClient tc = getInternalTransportClient(initTransportClientSettings)) {
+
+            tc.addTransportAddress(new TransportAddress(new InetSocketAddress(nodeHost, nodePort)));
+            Assert.assertEquals(3,
+                    tc.admin().cluster().nodesInfo(new NodesInfoRequest()).actionGet().getNodes().size());
+        }
+    }
+
+    protected TransportClient getInternalTransportClient(Settings initTransportClientSettings) {
+
+        final String prefix = getResourceFolder()==null?"":getResourceFolder()+"/";
+
+        Settings tcSettings = Settings.builder()
+                .put("cluster.name", clustername)
+                .put("opendistro_security.ssl.transport.truststore_filepath",
+                        FileHelper.getAbsoluteFilePathFromClassPath(prefix+"truststore.jks"))
+                .put("opendistro_security.ssl.transport.enforce_hostname_verification", false)
+                .put("opendistro_security.ssl.transport.keystore_filepath",
+                        FileHelper.getAbsoluteFilePathFromClassPath(prefix+"kirk-keystore.jks"))
+                .put(initTransportClientSettings)
+                .build();
+
+        TransportClient tc = new TransportClientImpl(tcSettings, asCollection(Netty4Plugin.class, OpenDistroSecuritySSLPlugin.class));
+        tc.addTransportAddress(new TransportAddress(new InetSocketAddress(nodeHost, nodePort)));
+        return tc;
+    }
+
+    protected String getResourceFolder() {
+        return null;
+    }
+
 
     @Before
     public void setUp() throws Exception {
@@ -316,6 +363,7 @@ public abstract class AbstractUnitTest {
             myTrustStore.load(new FileInputStream(getAbsoluteFilePathFromClassPath("truststore.jks").toFile()), "changeit".toCharArray());
 
             final KeyStore keyStore = KeyStore.getInstance(keystore.toLowerCase().endsWith("p12")?"PKCS12":"JKS");
+            File file = getAbsoluteFilePathFromClassPath(keystore).toFile();
             keyStore.load(new FileInputStream(getAbsoluteFilePathFromClassPath(keystore).toFile()), "changeit".toCharArray());
 
             final SSLContextBuilder sslContextbBuilder = SSLContexts.custom().useProtocol("TLS");
@@ -346,6 +394,42 @@ public abstract class AbstractUnitTest {
         hcb.setDefaultSocketConfig(SocketConfig.custom().setSoTimeout(60 * 1000).build());
 
         return hcb.build();
+    }
+
+    public CloseableHttpResponse executePutRequest(final String request, String body, Header... header) throws Exception {
+        HttpPut uriRequest = new HttpPut(getHttpServerUri() + "/" + request);
+        if (body != null && !body.isEmpty()) {
+            uriRequest.setEntity(new StringEntity(body));
+        }
+        return executeRequest(uriRequest, header);
+    }
+
+    public CloseableHttpResponse executeRequest(HttpUriRequest uriRequest, Header... header) throws Exception {
+
+        CloseableHttpClient httpClient = null;
+        try {
+
+            httpClient = getHTTPClient();
+
+            if (header != null && header.length > 0) {
+                for (int i = 0; i < header.length; i++) {
+                    Header h = header[i];
+                    uriRequest.addHeader(h);
+                }
+            }
+
+            if (!uriRequest.containsHeader("Content-Type")) {
+                uriRequest.addHeader("Content-Type","application/json");
+            }
+
+            return  httpClient.execute(uriRequest);
+
+        } finally {
+
+            if (httpClient != null) {
+                httpClient.close();
+            }
+        }
     }
     
     protected Collection<Class<? extends Plugin>> asCollection(Class<? extends Plugin>... plugins) {
