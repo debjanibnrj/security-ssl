@@ -148,7 +148,7 @@
       <artifactId>json-smart</artifactId>
       <version>2.2</version>
     </dependency>
-
+  
     <!-- Only test scoped dependencies hereafter -->
     <dependency>
       <groupId>commons-io</groupId>
