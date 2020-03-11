@@ -46,6 +46,7 @@ import java.nio.file.Paths;
 import java.security.KeyStore;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 import javax.net.ssl.SSLContext;
@@ -53,6 +54,7 @@ import javax.net.ssl.SSLContext;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.http.Header;
+import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
@@ -124,6 +126,8 @@ public abstract class AbstractUnitTest {
     protected boolean sendHTTPClientCertificate = false;
     protected boolean trustHTTPServerCertificate = false;
     protected String keystore = "node-0-keystore.jks";
+    protected String truststore = "truststore.jks";
+    protected String truststorePwd = "changeit";
 
     @Rule
     public final TestWatcher testWatcher = new TestWatcher() {
@@ -172,8 +176,8 @@ public abstract class AbstractUnitTest {
                 .put("transport.type.default", "netty4")
                 .put("node.max_local_storage_nodes", 3)
                 .put("path.home",".");
-        
-        
+
+
     }
     // @formatter:on
 
@@ -360,7 +364,7 @@ public abstract class AbstractUnitTest {
             log.debug("Configure HTTP client with SSL");
 
             final KeyStore myTrustStore = KeyStore.getInstance("JKS");
-            myTrustStore.load(new FileInputStream(getAbsoluteFilePathFromClassPath("truststore.jks").toFile()), "changeit".toCharArray());
+            myTrustStore.load(new FileInputStream(getAbsoluteFilePathFromClassPath(truststore).toFile()), truststorePwd.toCharArray());
 
             final KeyStore keyStore = KeyStore.getInstance(keystore.toLowerCase().endsWith("p12")?"PKCS12":"JKS");
             File file = getAbsoluteFilePathFromClassPath(keystore).toFile();
@@ -375,7 +379,7 @@ public abstract class AbstractUnitTest {
             if (sendHTTPClientCertificate) {
                 sslContextbBuilder.loadKeyMaterial(keyStore, "changeit".toCharArray());
             }
-            
+
             final SSLContext sslContext = sslContextbBuilder.build();
 
             String[] protocols = null;
@@ -385,7 +389,7 @@ public abstract class AbstractUnitTest {
             } else {
                 protocols = new String[] { "TLSv1", "TLSv1.1", "TLSv1.2" };
             }
-            
+
             final SSLConnectionSocketFactory sslsf = new SSLConnectionSocketFactory(sslContext, protocols, null, NoopHostnameVerifier.INSTANCE);
 
             hcb.setSSLSocketFactory(sslsf);
@@ -396,7 +400,7 @@ public abstract class AbstractUnitTest {
         return hcb.build();
     }
 
-    public CloseableHttpResponse executePutRequest(final String request, String body, Header... header) throws Exception {
+    public HttpResponse executePutRequest(final String request, String body, Header... header) throws Exception {
         HttpPut uriRequest = new HttpPut(getHttpServerUri() + "/" + request);
         if (body != null && !body.isEmpty()) {
             uriRequest.setEntity(new StringEntity(body));
@@ -404,7 +408,7 @@ public abstract class AbstractUnitTest {
         return executeRequest(uriRequest, header);
     }
 
-    public CloseableHttpResponse executeRequest(HttpUriRequest uriRequest, Header... header) throws Exception {
+    public HttpResponse executeRequest(HttpUriRequest uriRequest, Header... header) throws Exception {
 
         CloseableHttpClient httpClient = null;
         try {
@@ -422,8 +426,9 @@ public abstract class AbstractUnitTest {
                 uriRequest.addHeader("Content-Type","application/json");
             }
 
-            return  httpClient.execute(uriRequest);
-
+            HttpResponse res = new HttpResponse(httpClient.execute(uriRequest));
+            log.debug(res.getBody());
+            return res;
         } finally {
 
             if (httpClient != null) {
@@ -431,11 +436,11 @@ public abstract class AbstractUnitTest {
             }
         }
     }
-    
+
     protected Collection<Class<? extends Plugin>> asCollection(Class<? extends Plugin>... plugins) {
         return Arrays.asList(plugins);
     }
-    
+
     protected class TransportClientImpl extends TransportClient {
 
         public TransportClientImpl(Settings settings, Collection<Class<? extends Plugin>> plugins) {
@@ -444,6 +449,76 @@ public abstract class AbstractUnitTest {
 
         public TransportClientImpl(Settings settings, Settings defaultSettings, Collection<Class<? extends Plugin>> plugins) {
             super(settings, defaultSettings, plugins, null);
-        }       
+        }
+    }
+
+    public class HttpResponse {
+        private final CloseableHttpResponse inner;
+        private final String body;
+        private final Header[] header;
+        private final int statusCode;
+        private final String statusReason;
+
+        public HttpResponse(CloseableHttpResponse inner) throws IllegalStateException, IOException {
+            super();
+            this.inner = inner;
+            final HttpEntity entity = inner.getEntity();
+            if(entity == null) { //head request does not have a entity
+                this.body = "";
+            } else {
+                this.body = IOUtils.toString(entity.getContent(), StandardCharsets.UTF_8);
+            }
+            this.header = inner.getAllHeaders();
+            this.statusCode = inner.getStatusLine().getStatusCode();
+            this.statusReason = inner.getStatusLine().getReasonPhrase();
+            inner.close();
+        }
+
+        public String getContentType() {
+            Header h = getInner().getFirstHeader("content-type");
+            if(h!= null) {
+                return h.getValue();
+            }
+            return null;
+        }
+
+        public boolean isJsonContentType() {
+            String ct = getContentType();
+            if(ct == null) {
+                return false;
+            }
+            return ct.contains("application/json");
+        }
+
+        public CloseableHttpResponse getInner() {
+            return inner;
+        }
+
+        public String getBody() {
+            return body;
+        }
+
+        public Header[] getHeader() {
+            return header;
+        }
+
+        public int getStatusCode() {
+            return statusCode;
+        }
+
+        public String getStatusReason() {
+            return statusReason;
+        }
+
+        public List<Header> getHeaders() {
+            return header==null? Collections.emptyList():Arrays.asList(header);
+        }
+
+        @Override
+        public String toString() {
+            return "HttpResponse [inner=" + inner + ", body=" + body + ", header=" + Arrays.toString(header) + ", statusCode=" + statusCode
+                + ", statusReason=" + statusReason + "]";
+        }
+
     }
 }

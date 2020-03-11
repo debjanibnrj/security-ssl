@@ -12,7 +12,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import net.minidev.json.JSONObject;
 import org.apache.commons.io.IOUtils;
-import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.util.EntityUtils;
 import org.elasticsearch.common.settings.Settings;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -100,6 +100,7 @@ public class OpenDistroSecuritySSLReloadCertsActionTests extends AbstractUnitTes
         trustHTTPServerCertificate = true;
         sendHTTPClientCertificate = true;
         keystore = "ssl/reload/kirk-keystore.jks";
+        truststore = "ssl/reload/truststore.jks";
 
         String certDetailsResponse = executeSimpleRequest(GET_CERT_DETAILS_ENDPOINT);
 
@@ -111,13 +112,11 @@ public class OpenDistroSecuritySSLReloadCertsActionTests extends AbstractUnitTes
         // Test Valid Case: Change transport file details to "ssl/pem/node-new.crt.pem" and "ssl/pem/node-new.key.pem"
         FileHelper.copyFileContents(FileHelper.getAbsoluteFilePathFromClassPath("ssl/reload/node-new.crt.pem").toString(), pemCertFilePath);
         FileHelper.copyFileContents(FileHelper.getAbsoluteFilePathFromClassPath("ssl/reload/node-new.key.pem").toString(), pemKeyFilePath);
-        CloseableHttpResponse response = executePutRequest(RELOAD_TRANSPORT_CERTS_ENDPOINT, null);
-
-        Assert.assertEquals(200, response.getStatusLine().getStatusCode());
+        HttpResponse response = executePutRequest(RELOAD_TRANSPORT_CERTS_ENDPOINT, null);
+        Assert.assertEquals(200, response.getStatusCode());
         expectedJsonResponse = new JSONObject();
         expectedJsonResponse.put("message", "updated transport certs");
-        Assert.assertEquals(expectedJsonResponse.toString(), IOUtils.toString(response.getEntity().getContent(),
-                StandardCharsets.UTF_8));
+        Assert.assertEquals(expectedJsonResponse.toString(), response.getBody());
 
         certDetailsResponse = executeSimpleRequest(GET_CERT_DETAILS_ENDPOINT);
         expectedJsonResponse = new JSONObject();
@@ -140,6 +139,7 @@ public class OpenDistroSecuritySSLReloadCertsActionTests extends AbstractUnitTes
         trustHTTPServerCertificate = true;
         sendHTTPClientCertificate = true;
         keystore = "ssl/reload/kirk-keystore.jks";
+        truststore = "ssl/reload/truststore.jks";
 
         String certDetailsResponse = executeSimpleRequest(GET_CERT_DETAILS_ENDPOINT);
         JSONObject expectedJsonResponse = new JSONObject();
@@ -150,13 +150,12 @@ public class OpenDistroSecuritySSLReloadCertsActionTests extends AbstractUnitTes
         // Test Valid Case: Change rest file details to "ssl/pem/node-new.crt.pem" and "ssl/pem/node-new.key.pem"
         FileHelper.copyFileContents(FileHelper.getAbsoluteFilePathFromClassPath("ssl/reload/node-new.crt.pem").toString(), pemCertFilePath);
         FileHelper.copyFileContents(FileHelper.getAbsoluteFilePathFromClassPath("ssl/reload/node-new.key.pem").toString(), pemKeyFilePath);
-        CloseableHttpResponse response = executePutRequest(RELOAD_HTTP_CERTS_ENDPOINT, null);
+        HttpResponse response = executePutRequest(RELOAD_HTTP_CERTS_ENDPOINT, null);
 
-        Assert.assertEquals(200, response.getStatusLine().getStatusCode());
+        Assert.assertEquals(200, response.getStatusCode());
         expectedJsonResponse = new JSONObject();
         expectedJsonResponse.put("message", "updated http certs");
-        Assert.assertEquals(expectedJsonResponse.toString(), IOUtils.toString(response.getEntity().getContent(),
-                StandardCharsets.UTF_8));
+        Assert.assertEquals(expectedJsonResponse.toString(), response.getBody());
 
         certDetailsResponse = executeSimpleRequest(GET_CERT_DETAILS_ENDPOINT);
         expectedJsonResponse = new JSONObject();
@@ -174,42 +173,20 @@ public class OpenDistroSecuritySSLReloadCertsActionTests extends AbstractUnitTes
         FileHelper.copyFileContents(FileHelper.getAbsoluteFilePathFromClassPath("ssl/reload/node.key.pem").toString(), pemKeyFilePath);
 
         initTestCluster(pemCertFilePath, pemKeyFilePath, pemCertFilePath, pemKeyFilePath, true);
-        
+
         enableHTTPClientSSL = true;
         trustHTTPServerCertificate = true;
         sendHTTPClientCertificate = true;
         keystore = "ssl/reload/kirk-keystore.jks";
+        truststore = "ssl/reload/truststore.jks";
 
-        CloseableHttpResponse response = executePutRequest("_opendistro/_security/api/ssl/wrong/reloadcerts", null);
+        HttpResponse response = executePutRequest("_opendistro/_security/api/ssl/wrong/reloadcerts", null);
         JSONObject expectedResponse = new JSONObject();
         // Note: toString and toJSONString replace / with \/. This helps get rid of the additional \ character.
         expectedResponse.put("message", "invalid uri path, please use /_opendistro/_security/api/ssl/http/reload or /_opendistro/_security/api/ssl/transport/reload");
         final String expectedResponseString = expectedResponse.toString().replace("\\", "");
-        Assert.assertEquals(expectedResponseString, IOUtils.toString(response.getEntity().getContent(),
-                StandardCharsets.UTF_8));
+        Assert.assertEquals(expectedResponseString, response.getBody());
     }
-
-
-    @Test
-    public void testSSLReloadFail_UnAuthorizedUser() throws Exception {
-        final String transportPemCertFilePath = testFolder.newFile("node-temp-cert.pem").getAbsolutePath();
-        final String transportPemKeyFilePath = testFolder.newFile("node-temp-key.pem").getAbsolutePath();
-        FileHelper.copyFileContents(FileHelper.getAbsoluteFilePathFromClassPath("ssl/reload/node.crt.pem").toString(), transportPemCertFilePath);
-        FileHelper.copyFileContents(FileHelper.getAbsoluteFilePathFromClassPath("ssl/reload/node.key.pem").toString(), transportPemKeyFilePath);
-
-        initTestCluster(transportPemCertFilePath, transportPemKeyFilePath, transportPemCertFilePath, transportPemKeyFilePath, true);
-
-        // Test endpoint for non-admin user
-        enableHTTPClientSSL = true;
-        trustHTTPServerCertificate = true;
-        sendHTTPClientCertificate = true;
-        keystore = "ssl/reload/spock-keystore.jks";
-
-        CloseableHttpResponse response = executePutRequest(RELOAD_TRANSPORT_CERTS_ENDPOINT, null);
-        Assert.assertEquals(401, response.getStatusLine().getStatusCode());
-        Assert.assertEquals("Unauthorized", response.getStatusLine().getReasonPhrase());
-    }
-
 
     @Test
     public void testSSLReloadFail_InvalidDNAndDate() throws Exception {
@@ -225,16 +202,17 @@ public class OpenDistroSecuritySSLReloadCertsActionTests extends AbstractUnitTes
         trustHTTPServerCertificate = true;
         sendHTTPClientCertificate = true;
         keystore = "ssl/reload/kirk-keystore.jks";
+        truststore = "ssl/reload/truststore.jks";
+
         FileHelper.copyFileContents(FileHelper.getAbsoluteFilePathFromClassPath("ssl/reload/node-wrong.crt.pem").toString(), pemCertFilePath);
         FileHelper.copyFileContents(FileHelper.getAbsoluteFilePathFromClassPath("ssl/reload/node-wrong.key.pem").toString(), pemKeyFilePath);
 
-        CloseableHttpResponse response = executePutRequest(RELOAD_TRANSPORT_CERTS_ENDPOINT, null);
-        Assert.assertEquals(500, response.getStatusLine().getStatusCode());
+        HttpResponse response = executePutRequest(RELOAD_TRANSPORT_CERTS_ENDPOINT, null);
+        Assert.assertEquals(500, response.getStatusCode());
         JSONObject expectedResponse = new JSONObject();
         expectedResponse.put("error", "ElasticsearchSecurityException[Error while initializing transport SSL layer from PEM: java.lang.Exception: " +
                 "New Certs do not have valid Issuer DN, Subject DN or SAN.]; nested: Exception[New Certs do not have valid Issuer DN, Subject DN or SAN.];");
-        Assert.assertEquals(expectedResponse.toString(), IOUtils.toString(response.getEntity().getContent(),
-                StandardCharsets.UTF_8));
+        Assert.assertEquals(expectedResponse.toString(), response.getBody());
 
 
         // Test Invalid Case: Reloading with same certificates
@@ -242,11 +220,10 @@ public class OpenDistroSecuritySSLReloadCertsActionTests extends AbstractUnitTes
         FileHelper.copyFileContents(FileHelper.getAbsoluteFilePathFromClassPath("ssl/reload/node.key.pem").toString(), pemKeyFilePath);
 
         response = executePutRequest(RELOAD_TRANSPORT_CERTS_ENDPOINT, null);
-        Assert.assertEquals(500, response.getStatusLine().getStatusCode());
+        Assert.assertEquals(500, response.getStatusCode());
         expectedResponse = new JSONObject();
         expectedResponse.put("error", "ElasticsearchSecurityException[Error while initializing transport SSL layer from PEM: java.lang.Exception: New certificates should not expire before the current ones.]; nested: Exception[New certificates should not expire before the current ones.];");
-        Assert.assertEquals(expectedResponse.toString(), IOUtils.toString(response.getEntity().getContent(),
-                StandardCharsets.UTF_8));
+        Assert.assertEquals(expectedResponse.toString(), response.getBody());
     }
 
     @Test
@@ -265,15 +242,15 @@ public class OpenDistroSecuritySSLReloadCertsActionTests extends AbstractUnitTes
         trustHTTPServerCertificate = true;
         sendHTTPClientCertificate = true;
         keystore = "ssl/reload/kirk-keystore.jks";
+        truststore = "ssl/reload/truststore.jks";
 
-        CloseableHttpResponse response  = executePutRequest(RELOAD_TRANSPORT_CERTS_ENDPOINT, null);
-        Assert.assertEquals(400, response.getStatusLine().getStatusCode());
+        HttpResponse response  = executePutRequest(RELOAD_TRANSPORT_CERTS_ENDPOINT, null);
+        Assert.assertEquals(400, response.getStatusCode());
         JSONObject expectedResponse = new JSONObject();
         expectedResponse.put("error", "no handler found for uri [/_opendistro/_security/api/ssl/transport/reloadcerts] and method [PUT]");
         // Note: toString and toJSONString replace / with \/. This helps get rid of the additional \ character.
         final String expectedResponseString = expectedResponse.toString().replace("\\", "");
-        Assert.assertEquals(expectedResponseString, IOUtils.toString(response.getEntity().getContent(),
-                StandardCharsets.UTF_8));
+        Assert.assertEquals(expectedResponseString, response.getBody());
     }
-    
+
 }
